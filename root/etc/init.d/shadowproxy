@@ -124,7 +124,7 @@ generate_config_json() {
   config_foreach parse_config_main main
 
   config_foreach parse_config_server server
-  sed -i "s/\"{servers_list}\"/${SERVER_LIST_STR}/g" "$CONF_DIR/config.json"
+  sed -i "s#\"{servers_list}\"#$SERVER_LIST_STR#g" "$CONF_DIR/config.json"
 }
 
 config_sysctl() {
@@ -265,7 +265,7 @@ stop_service() {
 
 service_triggers() {
   procd_add_reload_trigger "shadowproxy"
-  procd_add_interface_trigger "interface.*" "pppoe-wan" /etc/init.d/shadowproxy restart
+  procd_add_interface_trigger "interface.*" "pppoe-wan*" /etc/init.d/shadowproxy restart
 }
 
 reload_service() {
