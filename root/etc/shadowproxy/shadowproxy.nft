@@ -75,13 +75,6 @@ table inet shadowproxy-mangle {
         elements = { 2001:4860:4860::8888, 2001:4860:4860::8844 }
     }
 
-    set ignored_udp_ports {
-        type inet_service
-        elements = {
-            53,
-        }
-    }
-
     set extradns_v6 {
         type ipv6_addr
         elements = { ::1, 2001:4860:4860::8888, 2001:4860:4860::8844 }
@@ -125,6 +118,7 @@ table inet shadowproxy-mangle {
 
     chain shadowproxy_input {
         type filter hook prerouting priority mangle; policy accept;
+        meta mark 0x000000ff return comment "bypass sslocal fwmark 255"
         ip daddr @whitelist_v4_set return comment "bypass whitelist_v4"
         ip6 daddr @whitelist_v6_set return comment "bypass whitelist_v6"
         ip daddr @chnip4_set return comment "bypass chnip4"
