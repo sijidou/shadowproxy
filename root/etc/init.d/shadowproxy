@@ -168,14 +168,13 @@ update_proxy_domains() {
 
   domain_list=""
   for item in $(grep -v '^$' /etc/shadowproxy/proxy_domains.acl | grep -v '^#'); do
-    # escape two times
-    domain="$(echo ".${item}" | sed 's/\./\\\\\./g')"
+    domain="||${item}"
     _info "proxy domain: $domain"
 
     if [ -n "${domain_list}" ]; then
       domain_list="${domain_list}\n"
     fi
-    domain_list="${domain_list}${domain}"
+    domain_list="${domain_list}${domain}" 
   done
 
   sed -i "s/{proxy_domains}/${domain_list}/g" "$CONF_DIR/shadowproxy-dns.acl"
