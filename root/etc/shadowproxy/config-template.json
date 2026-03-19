@@ -30,7 +30,7 @@
       "remote_dns_address": "{dns_remote_addr}",
       "remote_dns_port": 53,
       "acl": "/etc/shadowproxy/shadowproxy-dns.acl",
-      "client_cache_size": 0,
+      "client_cache_size": 8,
       "mode": "tcp_and_udp"
     }
   ],
