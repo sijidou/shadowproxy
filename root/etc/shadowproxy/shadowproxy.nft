@@ -80,7 +80,7 @@ table inet shadowproxy-mangle {
 
     chain shadowproxy_input {
         type filter hook prerouting priority mangle; policy accept;
-        # socket transparent 1 meta mark set 1 accept comment "fast-path for established tproxy sockets"
+        # meta l4proto tcp socket transparent 1 meta mark set 1 accept comment "fast-path for tcp tproxy only"
         meta mark 255 return comment "bypass sslocal fwmark 255"
         ip  daddr @dns_v4 udp dport 53 meta mark set 1 tproxy ip  to :$tproxy_port accept comment "support ipv4 dns"
         ip6 daddr @dns_v6 udp dport 53 meta mark set 1 tproxy ip6 to :$tproxy_port accept comment "support ipv6 dns"
@@ -92,6 +92,7 @@ table inet shadowproxy-mangle {
 
     chain shadowproxy_output {
         type route hook output priority mangle; policy accept;
+        oifname "lo" return comment "bypass loopback"
         meta mark 255 return comment "bypass sslocal fwmark 255"
         ip  daddr @dns_v4 udp dport 53 meta mark set 1 accept comment "support ipv4 dns"
         ip6 daddr @dns_v6 udp dport 53 meta mark set 1 accept comment "support ipv6 dns"
