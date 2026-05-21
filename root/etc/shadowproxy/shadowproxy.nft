@@ -80,26 +80,28 @@ table inet shadowproxy-mangle {
 
     chain shadowproxy_input {
         type filter hook prerouting priority mangle; policy accept;
-        # meta l4proto tcp socket transparent 1 meta mark set 1 accept comment "fast-path for tcp tproxy only"
         meta mark 255 return comment "bypass sslocal fwmark 255"
-        ip  daddr @dns_v4 udp dport 53 meta mark set 1 tproxy ip  to :$tproxy_port accept comment "support ipv4 dns"
-        ip6 daddr @dns_v6 udp dport 53 meta mark set 1 tproxy ip6 to :$tproxy_port accept comment "support ipv6 dns"
+        #meta l4proto tcp socket transparent 1 mark set 1 accept comment "fast-path for tcp tproxy"
+        #meta l4proto tcp ct state { established, related } accept comment "fast-path for tcp direct"
+        fib daddr type { local, broadcast, multicast } accept comment "bypass local/broadcast/multicast"
+        ip  daddr @dns_v4 udp dport 53 mark set 1 tproxy ip  to :$tproxy_port accept comment "support ipv4 dns"
+        ip6 daddr @dns_v6 udp dport 53 mark set 1 tproxy ip6 to :$tproxy_port accept comment "support ipv6 dns"
         jump bypass_rules
-        meta l4proto tcp meta mark set 1 tproxy to :$tproxy_port accept comment "proxy tcp"
-        udp dport != @ignored_udp_ports meta mark set 1 tproxy to :$tproxy_port accept comment "proxy udp"
+        meta l4proto tcp mark set 1 tproxy to :$tproxy_port accept comment "proxy tcp"
+        udp dport != @ignored_udp_ports mark set 1 tproxy to :$tproxy_port accept comment "proxy udp"
     }
-
 
     chain shadowproxy_output {
         type route hook output priority mangle; policy accept;
         oifname "lo" return comment "bypass loopback"
         meta mark 255 return comment "bypass sslocal fwmark 255"
-        ip  daddr @dns_v4 udp dport 53 meta mark set 1 accept comment "support ipv4 dns"
-        ip6 daddr @dns_v6 udp dport 53 meta mark set 1 accept comment "support ipv6 dns"
-        meta l4proto tcp ct direction reply return comment "tcp conntrack"
+        ct state { established, related } accept comment "bypass local server replies"
+        fib daddr type { broadcast, multicast } accept comment "bypass broadcast/multicast"
+        ip  daddr @dns_v4 udp dport 53 mark set 1 accept comment "support ipv4 dns"
+        ip6 daddr @dns_v6 udp dport 53 mark set 1 accept comment "support ipv6 dns"
         jump bypass_rules
-        meta l4proto tcp meta mark set 1 accept comment "reroute tcp to proxy"
-        udp dport != @ignored_udp_ports meta mark set 1 accept comment "reroute udp to proxy"
+        meta l4proto tcp mark set 1 accept comment "reroute tcp to proxy"
+        udp dport != @ignored_udp_ports mark set 1 accept comment "reroute udp to proxy"
     }
 
 }
