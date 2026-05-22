@@ -95,7 +95,6 @@ table inet shadowproxy-mangle {
         type route hook output priority mangle; policy accept;
         oifname "lo" return comment "bypass loopback"
         meta mark 255 return comment "bypass sslocal fwmark 255"
-        ct state { established, related } accept comment "bypass local server replies"
         fib daddr type { broadcast, multicast } accept comment "bypass broadcast/multicast"
         ip  daddr @dns_v4 udp dport 53 mark set 1 accept comment "support ipv4 dns"
         ip6 daddr @dns_v6 udp dport 53 mark set 1 accept comment "support ipv6 dns"
