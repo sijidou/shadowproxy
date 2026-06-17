@@ -1,3 +1,5 @@
+define tproxy_port = 1080
+
 define whitelist_v4 = {
     0.0.0.0/8,
     10.0.0.0/8,
@@ -25,32 +27,42 @@ define whitelist_v6 = {
     ff00::/8
 }
 
+#include "/etc/shadowproxy/whitemac"
 include "/etc/shadowproxy/chnip4.ips"
 include "/etc/shadowproxy/chnip6.ips"
 
 table inet shadowproxy-mangle {
 
+    #set whitemac_set {
+    #    type ether_addr
+    #    elements = $whitemac
+    #}
+
     set whitelist_v4_set {
         type ipv4_addr
         flags interval
+        auto-merge
         elements = $whitelist_v4
     }
 
     set whitelist_v6_set {
         type ipv6_addr
         flags interval
+        auto-merge
         elements = $whitelist_v6
     }
 
     set chnip4_set {
         type ipv4_addr
         flags interval
+        auto-merge
         elements = $chnip4
     }
 
     set chnip6_set {
         type ipv6_addr
         flags interval
+        auto-merge
         elements = $chnip6
     }
 
@@ -69,38 +81,40 @@ table inet shadowproxy-mangle {
         elements = { 53, 67, 68, 1900, 5353 }
     }
 
-
     chain bypass_rules {
-        ip  daddr @whitelist_v4_set accept comment "bypass whitelist_v4"
-        ip6 daddr @whitelist_v6_set accept comment "bypass whitelist_v6"
-        ip  daddr @chnip4_set       accept comment "bypass chnip4"
-        ip6 daddr @chnip6_set       accept comment "bypass chnip6"
+        ip  daddr @whitelist_v4_set ct mark set 2 accept
+        ip6 daddr @whitelist_v6_set ct mark set 2 accept
+        ip  daddr @chnip4_set       ct mark set 2 accept
+        ip6 daddr @chnip6_set       ct mark set 2 accept
     }
-
 
     chain shadowproxy_input {
         type filter hook prerouting priority mangle; policy accept;
-        meta mark 255 return comment "bypass sslocal fwmark 255"
-        #meta l4proto tcp socket transparent 1 mark set 1 accept comment "fast-path for tcp tproxy"
-        #meta l4proto tcp ct state { established, related } accept comment "fast-path for tcp direct"
-        fib daddr type { local, broadcast, multicast } accept comment "bypass local/broadcast/multicast"
-        ip  daddr @dns_v4 udp dport 53 mark set 1 tproxy ip  to :$tproxy_port accept comment "support ipv4 dns"
-        ip6 daddr @dns_v6 udp dport 53 mark set 1 tproxy ip6 to :$tproxy_port accept comment "support ipv6 dns"
+        #ether saddr != @whitemac_set return
+        meta mark 255 return
+        meta l4proto tcp socket transparent 1 mark set 1 accept
+        ct mark 2 accept
+        udp dport != @ignored_udp_ports ct mark 1 mark set 1 tproxy to :$tproxy_port accept
+        fib daddr type { local, broadcast, multicast } accept
+        ip  daddr @dns_v4 udp dport 53 mark set 1 tproxy ip  to :$tproxy_port accept
+        ip6 daddr @dns_v6 udp dport 53 mark set 1 tproxy ip6 to :$tproxy_port accept
         jump bypass_rules
-        meta l4proto tcp mark set 1 tproxy to :$tproxy_port accept comment "proxy tcp"
-        udp dport != @ignored_udp_ports mark set 1 tproxy to :$tproxy_port accept comment "proxy udp"
+        meta l4proto tcp mark set 1 tproxy to :$tproxy_port ct mark set 1 accept
+        udp dport != @ignored_udp_ports mark set 1 tproxy to :$tproxy_port ct mark set 1 accept
     }
 
     chain shadowproxy_output {
         type route hook output priority mangle; policy accept;
-        oifname "lo" return comment "bypass loopback"
-        meta mark 255 return comment "bypass sslocal fwmark 255"
-        fib daddr type { broadcast, multicast } accept comment "bypass broadcast/multicast"
-        ip  daddr @dns_v4 udp dport 53 mark set 1 accept comment "support ipv4 dns"
-        ip6 daddr @dns_v6 udp dport 53 mark set 1 accept comment "support ipv6 dns"
+        oifname "lo" return
+        meta mark 255 return
+        fib daddr type { local, broadcast, multicast } accept
+        ct mark 2 accept
+        ct mark 1 mark set 1 accept
+        ip  daddr @dns_v4 udp dport 53 mark set 1 accept
+        ip6 daddr @dns_v6 udp dport 53 mark set 1 accept
         jump bypass_rules
-        meta l4proto tcp mark set 1 accept comment "reroute tcp to proxy"
-        udp dport != @ignored_udp_ports mark set 1 accept comment "reroute udp to proxy"
+        meta l4proto tcp mark set 1 ct mark set 1 accept
+        udp dport != @ignored_udp_ports mark set 1 ct mark set 1 accept
     }
 
 }
