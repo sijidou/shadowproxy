@@ -23,13 +23,18 @@ GFW_OFFICIAL_MAIN="https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwl
 GFW_OFFICIAL_BAK="https://fastly.jsdelivr.net/gh/gfwlist/gfwlist@master/gfwlist.txt"
 
 CUSTOM_BYPASS="
-127.0.0.0/8
 10.0.0.0/8
 172.16.0.0/12
 192.168.0.0/16
+127.0.0.0/8
 169.254.0.0/16
+100.64.0.0/10
+224.0.0.0/4
+255.255.255.255/32
+::1/128
 fc00::/7
 fe80::/10
+ff00::/8
 "
 
 CUSTOM_PROXY="
