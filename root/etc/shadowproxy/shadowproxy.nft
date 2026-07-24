@@ -64,7 +64,7 @@ table inet shadowproxy-mangle {
         meta l4proto tcp socket transparent 1 mark set 1 accept
         ct mark 2 accept
         ct mark 1 meta l4proto udp mark set 1 tproxy to :$tproxy_port accept
-	jump bypass_rules
+        jump bypass_rules
         meta l4proto { tcp, udp } mark set 1 tproxy to :$tproxy_port ct mark set 1 accept
     }
 
