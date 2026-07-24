@@ -9,16 +9,16 @@ define whitelist_v6 = {
     ::/128, ::ffff:0:0/96, 2001:db8::/32, fc00::/7, fe80::/10
 }
 
-include "/etc/shadowproxy/whitemac"
+#include "/etc/shadowproxy/whitemac"
 include "/etc/shadowproxy/chnip4.ips"
 include "/etc/shadowproxy/chnip6.ips"
 
 table inet shadowproxy-mangle {
 
-    set whitemac_set {
-        typeof ether saddr
-        elements = $whitemac
-    }
+    #set whitemac_set {
+    #    typeof ether saddr
+    #    elements = $whitemac
+    #}
 
     set whitelist_v4_set {
         typeof ip daddr
