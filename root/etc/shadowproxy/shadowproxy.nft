@@ -1,82 +1,51 @@
 define whitelist_v4 = {
-    0.0.0.0/8,
-    10.0.0.0/8,
-    100.64.0.0/10,
-    127.0.0.0/8,
-    169.254.0.0/16,
-    172.16.0.0/12,
-    192.0.0.0/24,
-    192.0.2.0/24,
-    192.168.0.0/16,
-    198.18.0.0/15,
-    198.51.100.0/24,
-    203.0.113.0/24,
-    224.0.0.0/4,
+    0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10,
+    169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24,
+    192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
     240.0.0.0/4
 }
 
 define whitelist_v6 = {
-    ::/128,
-    ::1/128,
-    ::ffff:0:0/96,
-    2001:db8::/32,
-    fc00::/7,
-    fe80::/10,
-    ff00::/8
+    ::/128, ::ffff:0:0/96, 2001:db8::/32, fc00::/7, fe80::/10
 }
 
-#include "/etc/shadowproxy/whitemac"
+include "/etc/shadowproxy/whitemac"
 include "/etc/shadowproxy/chnip4.ips"
 include "/etc/shadowproxy/chnip6.ips"
 
 table inet shadowproxy-mangle {
 
-    #set whitemac_set {
-    #    type ether_addr
-    #    elements = $whitemac
-    #}
+    set whitemac_set {
+        typeof ether saddr
+        elements = $whitemac
+    }
 
     set whitelist_v4_set {
-        type ipv4_addr
+        typeof ip daddr
         flags interval
         auto-merge
         elements = $whitelist_v4
     }
 
     set whitelist_v6_set {
-        type ipv6_addr
+        typeof ip6 daddr
         flags interval
         auto-merge
         elements = $whitelist_v6
     }
 
     set chnip4_set {
-        type ipv4_addr
+        typeof ip daddr
         flags interval
         auto-merge
         elements = $chnip4
     }
 
     set chnip6_set {
-        type ipv6_addr
+        typeof ip6 daddr
         flags interval
         auto-merge
         elements = $chnip6
-    }
-
-    set dns_v4 {
-        type ipv4_addr
-        elements = { 8.8.8.8, 8.8.4.4 }
-    }
-
-    set dns_v6 {
-        type ipv6_addr
-        elements = { 2001:4860:4860::8888, 2001:4860:4860::8844 }
-    }
-
-    set ignored_udp_ports {
-        type inet_service
-        elements = { 53, 67, 68, 1900, 5353 }
     }
 
     chain bypass_rules {
@@ -88,17 +57,15 @@ table inet shadowproxy-mangle {
 
     chain shadowproxy_input {
         type filter hook prerouting priority mangle; policy accept;
-        #ether saddr != @whitemac_set return
         meta mark 255 return
+        #meta iiftype ether ether saddr != @whitemac_set return
+        fib daddr type { local, broadcast, multicast } accept
+        fib daddr type { blackhole, unreachable, prohibit } drop
         meta l4proto tcp socket transparent 1 mark set 1 accept
         ct mark 2 accept
-        udp dport != @ignored_udp_ports ct mark 1 mark set 1 tproxy to :$tproxy_port accept
-        fib daddr type { local, broadcast, multicast } accept
-        ip  daddr @dns_v4 udp dport 53 mark set 1 tproxy ip  to :$tproxy_port accept
-        ip6 daddr @dns_v6 udp dport 53 mark set 1 tproxy ip6 to :$tproxy_port accept
-        jump bypass_rules
-        meta l4proto tcp mark set 1 tproxy to :$tproxy_port ct mark set 1 accept
-        udp dport != @ignored_udp_ports mark set 1 tproxy to :$tproxy_port ct mark set 1 accept
+        ct mark 1 meta l4proto udp mark set 1 tproxy to :$tproxy_port accept
+	jump bypass_rules
+        meta l4proto { tcp, udp } mark set 1 tproxy to :$tproxy_port ct mark set 1 accept
     }
 
     chain shadowproxy_output {
@@ -106,13 +73,10 @@ table inet shadowproxy-mangle {
         oifname "lo" return
         meta mark 255 return
         fib daddr type { local, broadcast, multicast } accept
+        fib daddr type { blackhole, unreachable, prohibit } drop
         ct mark 2 accept
         ct mark 1 mark set 1 accept
-        ip  daddr @dns_v4 udp dport 53 mark set 1 accept
-        ip6 daddr @dns_v6 udp dport 53 mark set 1 accept
         jump bypass_rules
-        meta l4proto tcp mark set 1 ct mark set 1 accept
-        udp dport != @ignored_udp_ports mark set 1 ct mark set 1 accept
+        meta l4proto { tcp, udp } mark set 1 ct mark set 1 accept
     }
-
 }
