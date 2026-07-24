@@ -1,223 +1,263 @@
 #!/bin/sh /etc/rc.common
 #
-# Copyright (C) 2014-2023 King <9566618@gmail.com>
-#
-# This is free software, licensed under the GNU General Public License v3.
-# See /LICENSE for more information.
+# Refactored for OpenWrt 23.05+/24.10+
+# Focus: Dynamic UCI Port Extraction, Zero-Flash Write, Atomic Nftables.
+# Optimized: Reduced fork/exec overhead, streamlined awk/sed stream processing.
 #
 
 START=90
 STOP=15
-
 USE_PROCD=1
 
 NAME=shadowproxy
-
-CONF_DIR=/etc/$NAME
-TPROXY_PORT=60080
-DNS_PORT=5300
-SERVER_LIST_V4=""
-SERVER_LIST_V6=""
-ENABLED="$(uci -q get shadowproxy.@main[0].enabled)"
-
-uci_load "$NAME"
+CONF_DIR="/etc/$NAME"
+RUN_DIR="/var/run/$NAME"
 
 _info() {
-  logger -p 6 -t $NAME "$1"
+    logger -p 6 -t "$NAME" "$1"
 }
 
 _error() {
-  logger -p 3 -t $NAME "$1"
+    logger -p 3 -t "$NAME" "$1"
 }
 
-parse_config_main() {
-  local section_name="$1"
-  local redir_port dns_port dns_remote_addr dns_local_addr worker_count socks_port http_port
-  local sed_args=""
-
-  config_get redir_port "$section_name" redir_port
-  config_get dns_port "$section_name" dns_port
-  config_get dns_remote_addr "$section_name" dns_remote_addr
-  config_get dns_local_addr "$section_name" dns_local_addr
-  config_get worker_count "$section_name" worker_count
-  config_get socks_port "$section_name" socks_port
-  config_get http_port "$section_name" http_port
-
-  [ "$redir_port" != "$TPROXY_PORT" ] && TPROXY_PORT=$redir_port
-  [ "$dns_port" != "$DNS_PORT" ] && DNS_PORT=$dns_port
-
-  if [ "$socks_port" != "0" ]; then
-    sed_args="$sed_args -e s/\"{socks_disabled}\"/false/g -e s/\"{socks_port}\"/${socks_port}/g"
-  else
-    sed_args="$sed_args -e s/\"{socks_disabled}\"/true/g -e s/\"{socks_port}\"/1080/g"
-  fi
-
-  if [ "$http_port" != "0" ]; then
-    sed_args="$sed_args -e s/\"{http_disabled}\"/false/g -e s/\"{http_port}\"/${http_port}/g"
-  else
-    sed_args="$sed_args -e s/\"{http_disabled}\"/true/g -e s/\"{http_port}\"/1081/g"
-  fi
-
-  sed -i $sed_args \
-      -e "s/\"{redir_port}\"/${redir_port}/g" \
-      -e "s/\"{dns_port}\"/${dns_port}/g" \
-      -e "s/\"{dns_remote_addr}\"/\"${dns_remote_addr}\"/g" \
-      -e "s/\"{dns_local_addr}\"/\"${dns_local_addr}\"/g" \
-      -e "s/\"{worker_count}\"/${worker_count}/g" \
-      "$CONF_DIR/config.json"
+prepare_run_dir() {
+    [ -d "$RUN_DIR" ] || mkdir -p -m 0755 "$RUN_DIR"
 }
 
-SERVER_LIST_STR=""
+get_tproxy_port() {
+    local port
+    port="$(uci -q get shadowproxy.@main[0].redir_port)"
+    [ -z "$port" ] && port="$(uci -q get shadowproxy.main.redir_port)"
+    echo "${port:-60080}"
+}
 
-parse_config_server() {
-  local section_name="$1"
-  local server server_port password method enabled
+get_dns_port() {
+    local port
+    port="$(uci -q get shadowproxy.@main[0].dns_port)"
+    [ -z "$port" ] && port="$(uci -q get shadowproxy.main.dns_port)"
+    echo "${port:-5300}"
+}
 
-  config_get server "$section_name" server
-  config_get server_port "$section_name" server_port
-  config_get password "$section_name" password
-  config_get method "$section_name" method
-  config_get enabled "$section_name" enabled
+check_wan_nat() {
+    local wan_dev jumpline
+    . /lib/functions/network.sh
+    network_flush_cache
+    network_get_device wan_dev wan
 
-  if [ "${enabled}" = '1' ]; then
-    if echo "$server" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
-      SERVER_LIST_V4="$SERVER_LIST_V4 ${server},"
-    elif echo "$server" | grep -qE '^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{1,4}$'; then
-      SERVER_LIST_V6="$SERVER_LIST_V6 ${server},"
-    else
-      echo "Unrecognized IP format $server"
+    [ -n "$wan_dev" ] || return 0
+
+    jumpline="$(nft list chain inet fw4 srcnat 2>/dev/null | grep 'jump srcnat_wan')"
+    
+    [ -n "$jumpline" ] || return 0
+
+    case "$jumpline" in
+        *\"$wan_dev\"*) return 0 ;;
+    esac
+
+    _info "WAN device $wan_dev missing from firewall srcnat."
+
+    if [ -f "/var/run/fw4.lock" ]; then
+        _info "Firewall lock detected, skipping synchronous reload to avoid race conditions."
+        return 0
     fi
 
-    [ -n "${SERVER_LIST_STR}" ] && SERVER_LIST_STR="${SERVER_LIST_STR},\n"
-    
-    SERVER_LIST_STR="${SERVER_LIST_STR}{\n"
-    SERVER_LIST_STR="${SERVER_LIST_STR}      \"server\": \"${server}\",\n"
-    SERVER_LIST_STR="${SERVER_LIST_STR}      \"server_port\": ${server_port},\n"
-    SERVER_LIST_STR="${SERVER_LIST_STR}      \"password\": \"${password}\",\n"
-    SERVER_LIST_STR="${SERVER_LIST_STR}      \"method\": \"${method}\"\n"
-    SERVER_LIST_STR="${SERVER_LIST_STR}    }"
-  fi
+    _info "Triggering asynchronous firewall self-healing..."
+    (fw4 reload >/dev/null 2>&1 || /etc/init.d/firewall reload >/dev/null 2>&1) &
 }
 
 generate_config_json() {
-  cp "$CONF_DIR/config-template.json" "$CONF_DIR/config.json"
-  config_foreach parse_config_main main
-  config_foreach parse_config_server server
-  sed -i "s|\"{servers_list}\"|${SERVER_LIST_STR}|g" "$CONF_DIR/config.json"
+    prepare_run_dir
+    
+    local template_file="$CONF_DIR/config.uc"
+    local target_file="$RUN_DIR/config.json"
+    
+    if [ ! -f "$template_file" ]; then
+        _error "ucode script $template_file not found!"
+        return 1
+    fi
+
+    if ! command -v ucode >/dev/null 2>&1; then
+        _error "ucode binary not found! Please install ucode package."
+        return 1
+    fi
+
+    if ! ucode "$template_file" > "$target_file.tmp" 2>/dev/null; then
+        _error "Failed to generate JSON config via ucode AST."
+        rm -f "$target_file.tmp"
+        return 1
+    fi
+
+    if ! grep -q '"servers": *\[' "$target_file.tmp" || grep -q '"servers": *\[ *\]' "$target_file.tmp"; then
+        _error "No enabled server generated by ucode, aborting."
+        rm -f "$target_file.tmp"
+        return 1
+    fi
+
+    mv -f "$target_file.tmp" "$target_file"
+    return 0
 }
 
 clear_route() {
-  while ip -4 rule del fwmark 0x1 table 803 2>/dev/null; do :; done
-  ip -4 route del local 0.0.0.0/0 dev lo table 803 2>/dev/null || true
+    while ip -4 rule del fwmark 0x1 table 803 2>/dev/null; do :; done
+    ip -4 route flush table 803 2>/dev/null || true
 
-  while ip -6 rule del fwmark 0x1 table 803 2>/dev/null; do :; done
-  ip -6 route del local ::/0 dev lo table 803 2>/dev/null || true
+    while ip -6 rule del fwmark 0x1 table 803 2>/dev/null; do :; done
+    ip -6 route flush table 803 2>/dev/null || true
 }
 
 config_route() {
-  clear_route
+    clear_route
 
-  ip -4 rule add fwmark 0x1 table 803
-  ip -4 route add local 0.0.0.0/0 dev lo table 803
+    ip -4 rule add fwmark 0x1 table 803 2>/dev/null
+    ip -4 route replace local 0.0.0.0/0 dev lo table 803 2>/dev/null
 
-  ip -6 rule add fwmark 0x1 table 803
-  ip -6 route add local ::/0 dev lo table 803
+    ip -6 rule add fwmark 0x1 table 803 2>/dev/null
+    ip -6 route replace local ::/0 dev lo table 803 2>/dev/null
 }
 
 update_nftables() {
-  if nft list tables | grep -q shadowproxy-mangle; then
-    nft delete table inet shadowproxy-mangle
-  fi
-  
-  nft -f /etc/shadowproxy/shadowproxy.nft -Dtproxy_port=${TPROXY_PORT}
-  
-  for item in $(grep -vE '^$|^#' /etc/shadowproxy/bypass_ipset.acl); do
-    if echo "$item" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
-      SERVER_LIST_V4="$SERVER_LIST_V4 ${item},"
-    elif echo "$item" | grep -qE '^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{1,4}$'; then
-      SERVER_LIST_V6="$SERVER_LIST_V6 ${item},"
-    else
-      echo "Unrecognized IP format $item"
+    local atomic_file="$RUN_DIR/shadowproxy_atomic.nft"
+    local error_log="$RUN_DIR/nft_error.log"
+    local tproxy_port
+    prepare_run_dir
+
+    tproxy_port="$(get_tproxy_port)"
+
+    if [ "$tproxy_port" = "0" ] || [ -z "$tproxy_port" ]; then
+        _info "redir_port is set to 0 (TPROXY disabled). Cleaning up mangle table and skipping nftables rules."
+        nft destroy table inet shadowproxy-mangle 2>/dev/null || true
+        rm -f "$atomic_file" "$error_log"
+        return 0
     fi
-  done
 
-  SERVER_LIST_V4="${SERVER_LIST_V4%,}"
-  SERVER_LIST_V6="${SERVER_LIST_V6%,}"
+    if [ ! -f "$CONF_DIR/shadowproxy.nft" ]; then
+        _error "$CONF_DIR/shadowproxy.nft missing!"
+        return 1
+    fi
 
-  if [ -n "${SERVER_LIST_V4}" ]; then
-    nft add element inet shadowproxy-mangle whitelist_v4_set { ${SERVER_LIST_V4} }
-  fi
-  if [ -n "${SERVER_LIST_V6}" ]; then
-    nft add element inet shadowproxy-mangle whitelist_v6_set { ${SERVER_LIST_V6} }
-  fi
+    _info "Applying nftables rules with TPROXY port: ${tproxy_port}"
+
+    # Block redirection minimizes I/O syscalls
+    {
+        echo "table inet shadowproxy-mangle {}"
+        echo "delete table inet shadowproxy-mangle"
+        cat "$CONF_DIR/shadowproxy.nft"
+        
+        # O(1) memory & streamlined awk parsing for IP whitelist
+        if [ -f "$CONF_DIR/bypass_ipset.acl" ]; then
+            awk '
+                /^[^#[:space:]]/ {
+                    if ($0 ~ /\./) v4 = (v4 ? v4 ", " : "") $0
+                    else if ($0 ~ /:/) v6 = (v6 ? v6 ", " : "") $0
+                }
+                END {
+                    if (v4) print "add element inet shadowproxy-mangle whitelist_v4_set { " v4 " }"
+                    if (v6) print "add element inet shadowproxy-mangle whitelist_v6_set { " v6 " }"
+                }
+            ' "$CONF_DIR/bypass_ipset.acl"
+        fi
+    } > "$atomic_file"
+
+    if ! nft -f "$atomic_file" -Dtproxy_port="${tproxy_port}" 2>"$error_log"; then
+        _error "Failed to load nftables rules atomically! Error details:"
+        _error "$(cat "$error_log")"
+        return 1
+    else
+        _info "Nftables rules loaded successfully."
+        rm -f "$error_log"
+    fi
 }
 
 update_proxy_domains() {
-  _info "Updating custom proxy domains..."
-  cp -f "$CONF_DIR/shadowproxy-dns-base.acl" "$CONF_DIR/shadowproxy-dns.acl"
+    _info "Updating custom proxy domains in RAM..."
+    prepare_run_dir
+    
+    local base_acl="$CONF_DIR/shadowproxy-dns-base.acl"
+    local domain_acl="$CONF_DIR/proxy_domains.acl"
+    local target_acl="$RUN_DIR/shadowproxy-dns.acl"
 
-  if [ -f "/etc/shadowproxy/proxy_domains.acl" ]; then
-    grep -vE '^$|^#' /etc/shadowproxy/proxy_domains.acl | sed 's/^/||/' > /tmp/custom_proxy_temp.txt
-    
-    sed -i -e '/{proxy_domains}/r /tmp/custom_proxy_temp.txt' -e '/{proxy_domains}/d' "$CONF_DIR/shadowproxy-dns.acl"
-    
-    rm -f /tmp/custom_proxy_temp.txt
-  else
-    _info "/etc/shadowproxy/proxy_domains.acl not found, skipping."
-  fi
+    if [ -f "$domain_acl" ]; then
+        # Single-pass awk: streams base ACL and injects domains without temp files or sed pipelines
+        awk '
+        /\{proxy_domains\}/ {
+            while ((getline line < domain_file) > 0) {
+                sub(/\r$/, "", line)
+                if (line ~ /^[^#[:space:]]/) print "||" line
+            }
+            close(domain_file)
+            next
+        }
+        { print }
+        ' domain_file="$domain_acl" "$base_acl" > "$target_acl"
+    else
+        _info "$domain_acl not found, copying base ACL only."
+        cp -f "$base_acl" "$target_acl"
+    fi
 }
 
 start_shadowproxy() {
-  procd_open_instance shadowproxy
-  procd_set_param command /usr/bin/sslocal -c /etc/shadowproxy/config.json
-  procd_set_param file /etc/shadowproxy/config.json
-  procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-2}
-  procd_set_param stdout 1
-  procd_set_param stderr 1
-  procd_set_param limits nofile="51200 51200"
-  procd_close_instance
+    procd_open_instance shadowproxy
+    procd_set_param command /usr/bin/sslocal -c "$RUN_DIR/config.json"
+    procd_set_param file "$RUN_DIR/config.json"
+    procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-2}
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param limits nofile="524288 524288"
+    procd_close_instance
 }
 
 start_service() {
-  _info "start shadowproxy service."
-  
-  if [ "${ENABLED}" = "0" ]; then
-    _info "service shadowproxy not enabled"
-    return 0
-  fi
+    local enabled="$(uci -q get shadowproxy.@main[0].enabled)"
+    
+    _info "Starting shadowproxy service."
+    
+    if [ "$enabled" = "0" ]; then
+        _info "Service shadowproxy is not enabled."
+        return 0
+    fi
 
-  if [ -z "$(command -v /usr/bin/sslocal)" ]; then
-    _error "/usr/bin/sslocal is not exist, please install it."
-    return 1
-  fi
+    if [ ! -x "/usr/bin/sslocal" ]; then
+        _error "/usr/bin/sslocal does not exist or is not executable, please install it."
+        return 1
+    fi
 
-  generate_config_json
+    generate_config_json || return 1
 
-  if [ -z "${SERVER_LIST_STR}" ]; then
-    _info "no enabled server, exit"
-    return 1
-  fi
-
-  config_route
-  update_nftables
-  update_proxy_domains
-  start_shadowproxy
+    check_wan_nat
+    config_route
+    update_nftables
+    update_proxy_domains
+    start_shadowproxy
 }
 
 stop_service() {
-  _info "stop shadowproxy service."
+    _info "Stopping shadowproxy service."
+    nft destroy table inet shadowproxy-mangle 2>/dev/null
+    clear_route
+    rm -rf "$RUN_DIR"/* 2>/dev/null || true
+}
 
-  if nft list tables | grep -q shadowproxy-mangle; then
-    nft delete table inet shadowproxy-mangle
-  fi
-  
-  clear_route
+reload_service() {
+    _info "Reloading shadowproxy service and config..."
+    local enabled="$(uci -q get shadowproxy.@main[0].enabled)"
+    
+    if [ "$enabled" = "1" ]; then
+        generate_config_json || return 1
+        check_wan_nat
+        config_route
+        update_nftables
+        update_proxy_domains
+        start_shadowproxy
+    else
+        stop_service
+    fi
 }
 
 service_triggers() {
-  procd_add_reload_trigger "shadowproxy"
-  procd_add_interface_trigger "interface.*" "wan" /etc/init.d/shadowproxy restart
-  procd_add_interface_trigger "interface.*" "wwan" /etc/init.d/shadowproxy restart
+    procd_add_reload_trigger "shadowproxy"
+    procd_add_interface_trigger "interface.*" "wan" /etc/init.d/shadowproxy reload
+    procd_add_interface_trigger "interface.*" "wwan" /etc/init.d/shadowproxy reload
+    procd_add_interface_trigger "interface.*" "wanb" /etc/init.d/shadowproxy reload
+    procd_add_interface_trigger "interface.*" "wanc" /etc/init.d/shadowproxy reload
 }
-
-
