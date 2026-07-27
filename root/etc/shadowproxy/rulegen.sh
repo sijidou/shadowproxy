@@ -22,21 +22,6 @@ GFW_LOYAL_BAK="https://fastly.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@relea
 GFW_OFFICIAL_MAIN="https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt"
 GFW_OFFICIAL_BAK="https://fastly.jsdelivr.net/gh/gfwlist/gfwlist@master/gfwlist.txt"
 
-CUSTOM_BYPASS="
-10.0.0.0/8
-172.16.0.0/12
-192.168.0.0/16
-127.0.0.0/8
-169.254.0.0/16
-100.64.0.0/10
-224.0.0.0/4
-255.255.255.255/32
-::1/128
-fc00::/7
-fe80::/10
-ff00::/8
-"
-
 CUSTOM_PROXY="
 ||github.com
 ||openai.com
@@ -268,12 +253,6 @@ cat <<EOF > "$TMPDIR/shadowproxy-dns-base.acl.tmp"
 # Time: $NOW
 
 [bypass_all]
-
-[bypass_list]
-EOF
-echo "$CUSTOM_BYPASS" | awk 'NF {print}' >> "$TMPDIR/shadowproxy-dns-base.acl.tmp"
-
-cat <<EOF >> "$TMPDIR/shadowproxy-dns-base.acl.tmp"
 
 [proxy_list]
 EOF
