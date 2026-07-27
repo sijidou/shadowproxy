@@ -255,6 +255,9 @@ cat <<EOF > "$TMPDIR/shadowproxy-dns-base.acl.tmp"
 [bypass_all]
 
 [proxy_list]
+{proxy_domains}
+
+
 EOF
 echo "$CUSTOM_PROXY" | awk 'NF {print}' >> "$TMPDIR/shadowproxy-dns-base.acl.tmp"
 
