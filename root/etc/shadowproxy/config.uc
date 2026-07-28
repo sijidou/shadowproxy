@@ -86,7 +86,7 @@ let config = {
     servers: servers_list,
     timeout: 300,
     keep_alive: 60,
-    nofile: 524288,
+    nofile: 65536,
     ipv6_first: true,
     ipv6_only: false,
     outbound_fwmark: 255,
