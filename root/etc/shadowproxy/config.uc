@@ -104,8 +104,26 @@ let config = {
         check_best_interval: 5
     },
     log: {
-        config_path: "/etc/shadowproxy/log4rs.yml",
-        verbosity: "debug"
+        writers: [
+            {
+                console: {
+                    level: 0,
+                    format: {
+                        without_time: true
+                    }
+                }
+            },
+            {
+                file: {
+                    level: 0,
+                    directory: "/var/log",
+                    rotation: "daily",
+                    prefix: "shadowproxy",
+                    suffix: "log",
+                    max_files: 30
+                }
+            }
+        ]
     }
 };
 
