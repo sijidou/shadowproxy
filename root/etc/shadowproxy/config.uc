@@ -76,7 +76,7 @@ if (dns_port > 0) {
         remote_dns_address: dns_remote_addr,
         remote_dns_port: 53,
         acl: "/var/run/shadowproxy/shadowproxy-dns.acl",
-        client_cache_size: 0,
+        client_cache_size: 512,
         mode: "tcp_and_udp"
     });
 }
@@ -97,11 +97,6 @@ let config = {
         replay_attack: {
             policy: "reject"
         }
-    },
-    balancer: {
-        max_server_rtt: 5,
-        check_interval: 10,
-        check_best_interval: 5
     },
     log: {
         writers: [
@@ -126,6 +121,14 @@ let config = {
         ]
     }
 };
+
+if (length(servers_list) > 1) {
+    config.balancer = {
+        max_server_rtt: 5,
+        check_interval: 10,
+        check_best_interval: 5
+    };
+}
 
 if (worker_count == 1) {
     config.runtime = {
