@@ -84,8 +84,6 @@ generate_config_json() {
         return 1
     fi
 
-    # 单次流式 awk：合并完成「JSON结构合法性校验」与「nofile 参数抓取」
-    # 彻底砍掉额外的 grep / jsonfilter I/O 与进程 Fork
     if ! eval "$(awk -F'[:=]' '
         /"servers": *\[ *\]/ { empty_servers=1 }
         /"servers": *\[/ { found_servers=1 }
