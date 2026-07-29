@@ -8,6 +8,8 @@ NAME=shadowproxy
 CONF_DIR="/etc/$NAME"
 RUN_DIR="/var/run/$NAME"
 NOFILE_LIMIT="65536"
+PROXY_FWMARK="0xfe"
+PROXY_TABLE="803"
 
 _info() {
     logger -p 6 -t "$NAME" "$1"
@@ -103,21 +105,21 @@ generate_config_json() {
 }
 
 clear_route() {
-    while ip -4 rule del fwmark 0x1 table 803 2>/dev/null; do :; done
-    ip -4 route flush table 803 2>/dev/null || true
+    while ip -4 rule del fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null; do :; done
+    ip -4 route flush table $PROXY_TABLE 2>/dev/null || true
 
-    while ip -6 rule del fwmark 0x1 table 803 2>/dev/null; do :; done
-    ip -6 route flush table 803 2>/dev/null || true
+    while ip -6 rule del fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null; do :; done
+    ip -6 route flush table $PROXY_TABLE 2>/dev/null || true
 }
 
 config_route() {
     clear_route
 
-    ip -4 rule add fwmark 0x1 table 803 2>/dev/null
-    ip -4 route replace local 0.0.0.0/0 dev lo table 803 2>/dev/null
+    ip -4 rule add fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null
+    ip -4 route replace local 0.0.0.0/0 dev lo table $PROXY_TABLE 2>/dev/null
 
-    ip -6 rule add fwmark 0x1 table 803 2>/dev/null
-    ip -6 route replace local ::/0 dev lo table 803 2>/dev/null
+    ip -6 rule add fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null
+    ip -6 route replace local ::/0 dev lo table $PROXY_TABLE 2>/dev/null
 }
 
 update_nftables() {
