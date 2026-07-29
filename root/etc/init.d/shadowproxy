@@ -218,12 +218,13 @@ start_shadowproxy() {
 start_service() {
     local enabled="$(uci -q get shadowproxy.@main[0].enabled)"
     
-    _info "Starting shadowproxy service."
-    
     if [ "$enabled" = "0" ]; then
-        _info "Service shadowproxy is not enabled."
+        _info "Service shadowproxy is not enabled. Cleaning up..."
+        stop_service
         return 0
     fi
+
+    _info "Starting shadowproxy service."
 
     if [ ! -x "/usr/bin/sslocal" ]; then
         _error "/usr/bin/sslocal does not exist or is not executable, please install it."
@@ -244,22 +245,6 @@ stop_service() {
     nft destroy table inet shadowproxy-mangle 2>/dev/null
     clear_route
     rm -rf "$RUN_DIR"/* 2>/dev/null || true
-}
-
-reload_service() {
-    _info "Reloading shadowproxy service and config..."
-    local enabled="$(uci -q get shadowproxy.@main[0].enabled)"
-    
-    if [ "$enabled" = "1" ]; then
-        generate_config_json || return 1
-        check_wan_nat
-        config_route
-        update_nftables
-        update_proxy_domains
-        start_shadowproxy
-    else
-        stop_service
-    fi
 }
 
 service_triggers() {
