@@ -9,6 +9,10 @@ define whitelist_v6 = {
     ::/128, ::ffff:0:0/96, 2001:db8::/32, fc00::/7, fe80::/10
 }
 
+define mark_proxy = 0xfe
+define mark_bypass = 0xfd
+define mark_ignore = 0xff
+
 #include "/etc/shadowproxy/whitemac"
 include "/etc/shadowproxy/chnip4.ips"
 include "/etc/shadowproxy/chnip6.ips"
@@ -49,34 +53,34 @@ table inet shadowproxy-mangle {
     }
 
     chain bypass_rules {
-        ip  daddr @whitelist_v4_set ct mark set 2 accept
-        ip6 daddr @whitelist_v6_set ct mark set 2 accept
-        ip  daddr @chnip4_set       ct mark set 2 accept
-        ip6 daddr @chnip6_set       ct mark set 2 accept
+        ip  daddr @whitelist_v4_set ct mark set $mark_bypass accept
+        ip6 daddr @whitelist_v6_set ct mark set $mark_bypass accept
+        ip  daddr @chnip4_set       ct mark set $mark_bypass accept
+        ip6 daddr @chnip6_set       ct mark set $mark_bypass accept
     }
 
     chain shadowproxy_input {
         type filter hook prerouting priority mangle; policy accept;
-        meta mark 255 return
+        meta mark $mark_ignore return
         #meta iiftype ether ether saddr != @whitemac_set return
         fib daddr type { local, broadcast, multicast } accept
         fib daddr type { blackhole, unreachable, prohibit } drop
-        meta l4proto tcp socket transparent 1 mark set 1 accept
-        ct mark 2 accept
-        ct mark 1 meta l4proto udp mark set 1 tproxy to :$tproxy_port accept
+        meta l4proto tcp socket transparent 1 mark set $mark_proxy accept
+        ct mark $mark_bypass accept
+        ct mark $mark_proxy meta l4proto udp mark set $mark_proxy tproxy to :$tproxy_port accept
         jump bypass_rules
-        meta l4proto { tcp, udp } mark set 1 tproxy to :$tproxy_port ct mark set 1 accept
+        meta l4proto { tcp, udp } mark set $mark_proxy tproxy to :$tproxy_port ct mark set $mark_proxy accept
     }
 
     chain shadowproxy_output {
         type route hook output priority mangle; policy accept;
         oifname "lo" return
-        meta mark 255 return
+        meta mark $mark_ignore return
         fib daddr type { local, broadcast, multicast } accept
         fib daddr type { blackhole, unreachable, prohibit } drop
-        ct mark 2 accept
-        ct mark 1 mark set 1 accept
+        ct mark $mark_bypass accept
+        ct mark $mark_proxy mark set $mark_proxy accept
         jump bypass_rules
-        meta l4proto { tcp, udp } mark set 1 ct mark set 1 accept
+        meta l4proto { tcp, udp } mark set $mark_proxy ct mark set $mark_proxy accept
     }
 }
