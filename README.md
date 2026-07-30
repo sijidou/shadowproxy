@@ -1,77 +1,88 @@
-ShadowProxy - OpenWrt LuCI for Shadowsocks-Rust
-===
+# Shadowproxy for OpenWrt
 
-Introduction
----
+A lightweight, experimental Shadowsocks transparent proxy solution tailored for the OpenWrt fw4 (nftables) environment.
 
-It supports to configure shadowsocks-rust tproxy(redir) and dns acl on openwrt, with LuCI interface.
+As OpenWrt transitions entirely to `nftables`, traditional `iptables`-based redirection can feel a bit heavy and cumbersome to maintain. Shadowproxy is a modest attempt to build a routing scheme that natively utilizes `nftables` `tproxy` features. By relying on the `ucode` engine for dynamic configuration rendering and integrating with the system's `procd` init daemon, it aims to provide a cleaner and relatively stable proxy experience. It was originally built for personal use, but hopefully, it can be of some value to the community.
 
-Wish it helps.
+## ✨ Features
 
-Install
----
+* **Native nftables Integration**: Hooks directly into the OpenWrt fw4 firewall framework, utilizing `nft sets` for bypass and proxy lists to help maintain efficient lookup speeds.
+* **Atomic Rule Updates**: Attempts to use atomic transactions for firewall rule reloads, reducing the chance of temporary traffic leaks or network drops during rule swapping.
+* **TCP & UDP Tproxy Support**: Leverages `tproxy` and `socket` kernel modules to handle both TCP and UDP traffic transparently.
+* **ucode-driven Configuration**: Uses OpenWrt's native `ucode` engine to compile UCI configurations directly into a JSON format readable by `sslocal`, avoiding messy shell string concatenations.
+* **Standard procd Integration**: Hooks natively into the system's service lifecycle, supporting configuration hash comparisons, auto-respawn, and network interface triggers.
 
-1. download the last ipk release file.
-2. `System(系统)` -> `Software Package(软件包)` -> `Upload(上传安装)` 
+## 📦 Dependencies
 
-Or `scp` and `opkg install shadowproxy_xxx.ipk`
+Before installing or compiling, please ensure your system has the following packages:
 
-Configuration
----
+* **Kernel Modules**:
+* `kmod-nft-tproxy`
+* `kmod-nft-socket`
 
-In main setting, it is better to set your local dns server, which could be found in `/tmp/resolve.conf.ppp` or `/tmp/resolv.conf.d/resolv.conf.auto`.
 
-![main settings](main-setting.png)
+* **System Utilities**:
+* `ucode` (for AST-based configuration generation)
 
-Add your shadowsocks servers in the server section. It's better to configure both ipv4 and ipv6 for one same server together. It will check which ip route is better to reach the server. 
 
-![server](server.png)
 
-Click `Save&Apply`
+## 🚀 Binary Installation (Important)
 
-Dependency
----
+To keep the package footprint as small as possible and leave the architecture choices entirely up to you, **this repository does not bundle the `sslocal` executable** (typically provided by `shadowsocks-rust`).
 
-1. `sslocal`, the executable shadowsocks-rust binary file is extracted from shadowsocks-rust releases. For convenient and security, the repo contains a `sslocal` file, which contains updated features for better network connection. If you have any security concerns, please compile from the source code with features `local-dns,local-redir,security-replay-attack-detect`.
-2. `nftables` and `iptables`, now it supports only `nftables`, which requires less coding work. 
+You will need to provide the core binary using one of the following methods:
 
-Configuration
----
+### Method 1: Inject before compiling (For ROM Builders)
 
-All configuration files are under `/etc/shadowproxy`. A `config-template.json` file is updated by the `/etc/init.d/shadowproxy` with uci configuration from `/etc/config/shadowproxy`.
+Before compiling your OpenWrt firmware or building the `.ipk`, rename your downloaded binary to `ssservice` and place it in the `bin/` directory of this source tree:
 
-Q&A
----
+```bash
+shadowproxy/bin/ssservice
 
-1. Installed but not appears in browser
-    - `rm -rf /tmp/luci-*`
-    - In Chrome `Developer Tools -> Network -> Disable Cache`
+```
 
-2. How to install without `ipk`
-    - Copy sslocal to `/usr/bin/sslocal`
-    - Copy `htdocs/*` to `/www/`
-    - Copy `root/*` to `/`
-    - `/etc/init.d/shadowproxy enable`
+The build system will automatically pick it up and install it to the correct path on the target device.
 
-3. First time configuration (bug to fix)
-    - The `/etc/init.d/shadowproxy` will config `dnsmasq` server automatically. If you did not set the correct server, you may not be able to reach network, because no dns server available. Configure your server and save apply.
-4. Supported Devices
-   - aarch64-musl (armv8)
-   - x86_64-musl
-   - x86_64-gnu
-5. Why plugins are not suggested?
-   - the plugins support in shadowsocks-rust, it starts another child process to auto proxy packets. which consumes hardware resources. And in such case, it is recommended that using v2ray or clash directly. 
-6. What is `err_cert_common_name_invalid`
-   - restart the browser or clear all caches. 
-7. How to support openwrt-21
-   - Check the [openwrt nftables doc](https://openwrt.org/docs/guide-user/firewall/misc/nftables)
-   - opkg update && opkg install nftables kmod-nft-tproxy
-8. How to set up shadowsocks-rust server
-   - the x86-64 gnu file `ssserver` is also supplied.  
-9. How to support other countries?
-   - Change the ip set in `chnip4.ips` and `chnip6.ips`, by default, no update is required for `shadowproxy-dns-base.acl`, and redir will proxy all data. Any PR is welcome
-10. How to use both IPV4 and IPV6?
-   - If your local network enabled IPV6, then you'd better configure an IPV6 server. Or you could not connect, for some domains are resolved with ipv6 addresses.
-   - If you only have IPV4 locally, you can use an IPV4 server only. For some VPS servers, only IPV4 available.
-11. How does DNS resolved?
-   - dnsmasq is still the main dns server. But dnsmasq will reroute packets to upstream, which is our local dns server. the local dns server would reroute the packets to remote overseas public dns server based on the acl table.  
+### Method 2: Manual deployment (For General Users)
+
+If you have already installed the Shadowproxy `.ipk`, simply download the appropriate `sslocal` (or `ssservice`) binary for your router's architecture, upload it via SSH to the `/usr/bin/` directory, and grant it execution permissions:
+
+```bash
+# Assuming you have uploaded the file to /tmp/sslocal
+mv /tmp/sslocal /usr/bin/sslocal
+chmod +x /usr/bin/sslocal
+
+```
+
+## ⚙️ Directory Structure
+
+Shadowproxy relies on the following directory layout to keep things organized:
+
+* **`/etc/config/shadowproxy`**: The main UCI configuration source (used by LuCI or CLI).
+* **`/etc/shadowproxy/`**: Persistent data and rules directory.
+* `shadowproxy.nft`: Core firewall logic definitions.
+* `config.uc`: The ucode template file.
+* `bypass_ipset.acl`: Custom direct-connection IP/CIDR lists.
+* `proxy_domains.acl`: Domains forced to route through the proxy.
+
+
+* **`/var/run/shadowproxy/`**: Runtime directory in RAM Disk. Stores the generated `config.json` and temporary `atomic.nft`. Clearing on reboot helps reduce flash memory wear.
+
+## 🛠️ Service Management
+
+Thanks to the standard `procd` integration, you can manage the service using typical OpenWrt commands:
+
+```bash
+# Start the service
+/etc/init.d/shadowproxy start
+
+# Stop the service
+/etc/init.d/shadowproxy stop
+
+# Reload configuration (Use after UCI changes or ACL updates)
+/etc/init.d/shadowproxy reload
+
+# Check service status
+/etc/init.d/shadowproxy status
+
+```
