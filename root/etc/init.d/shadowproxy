@@ -144,13 +144,11 @@ update_nftables() {
 
     _info "Applying nftables rules with TPROXY port: ${tproxy_port}"
 
-    # Block redirection minimizes I/O syscalls
     {
         echo "table inet shadowproxy-mangle {}"
         echo "delete table inet shadowproxy-mangle"
         cat "$CONF_DIR/shadowproxy.nft"
         
-        # O(1) memory & streamlined awk parsing for IP whitelist
         if [ -f "$CONF_DIR/bypass_ipset.acl" ]; then
             awk '
                 /^[^#[:space:]]/ {
@@ -184,7 +182,6 @@ update_proxy_domains() {
     local target_acl="$RUN_DIR/shadowproxy-dns.acl"
 
     if [ -f "$domain_acl" ]; then
-        # Single-pass awk: streams base ACL and injects domains without temp files or sed pipelines
         awk '
         /\{proxy_domains\}/ {
             while ((getline line < domain_file) > 0) {
