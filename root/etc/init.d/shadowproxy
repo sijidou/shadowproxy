@@ -38,29 +38,28 @@ get_dns_port() {
 }
 
 check_wan_nat() {
-    local wan_dev jumpline
-    . /lib/functions/network.sh
-    network_flush_cache
-    network_get_device wan_dev wan
-
-    [ -n "$wan_dev" ] || return 0
-
-    jumpline="$(nft list chain inet fw4 srcnat 2>/dev/null | grep 'jump srcnat_wan')"
+    local dev active_devs="" jumpline=""
     
-    [ -n "$jumpline" ] || return 0
+    active_devs=$( (ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null) | sed -n 's/.*dev \([^ ]*\).*/\1/p' | sort -u )
 
-    case "$jumpline" in
-        *\"$wan_dev\"*) return 0 ;;
-    esac
+    [ -z "$active_devs" ] && return 0
 
-    _info "WAN device $wan_dev missing from firewall srcnat."
+    for dev in $active_devs; do
+        jumpline="$(nft list chain inet fw4 srcnat 2>/dev/null | grep -w "$dev")"
+        
+        if [ -n "$jumpline" ]; then
+            return 0
+        fi
+    done
+
+    _info "NAT missing for active routing interfaces: $active_devs. Firewall state seems broken."
 
     if [ -f "/var/run/fw4.lock" ]; then
-        _info "Firewall lock detected, skipping synchronous reload to avoid race conditions."
+        _info "fw4 is currently locked, skipping reload to prevent race conditions."
         return 0
     fi
 
-    _info "Triggering asynchronous firewall self-healing..."
+    _info "Triggering asynchronous firewall self-healing for active devices..."
     (fw4 reload >/dev/null 2>&1 || /etc/init.d/firewall reload >/dev/null 2>&1) &
 }
 
@@ -246,7 +245,15 @@ stop_service() {
 
 service_triggers() {
     procd_add_reload_trigger "shadowproxy"
-    procd_add_interface_trigger "interface.*" "wan" /etc/init.d/shadowproxy reload
-    procd_add_interface_trigger "interface.*" "wanb" /etc/init.d/shadowproxy reload
-    procd_add_interface_trigger "interface.*" "wwan" /etc/init.d/shadowproxy reload
+    
+    local iface
+    for iface in $(uci -q show network | grep -E '^network\.[a-zA-Z0-9_]+=interface' | cut -d. -f2 | cut -d= -f1); do
+        case "$iface" in
+            loopback|lan|lan6|docker*)
+                ;;
+            *)
+                procd_add_interface_trigger "interface.*" "$iface" /etc/init.d/shadowproxy reload
+                ;;
+        esac
+    done
 }
