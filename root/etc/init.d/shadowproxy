@@ -30,22 +30,17 @@ get_tproxy_port() {
     echo "${port:-60080}"
 }
 
-get_dns_port() {
-    local port
-    port="$(uci -q get shadowproxy.@main[0].dns_port)"
-    [ -z "$port" ] && port="$(uci -q get shadowproxy.main.dns_port)"
-    echo "${port:-5300}"
-}
-
 check_wan_nat() {
-    local dev active_devs="" jumpline=""
+    local dev active_devs="" nat_rules="" jumpline=""
     
-    active_devs=$( (ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null) | sed -n 's/.*dev \([^ ]*\).*/\1/p' | sort -u )
+    active_devs=$( (ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null) | awk '/default/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | sort -u )
 
     [ -z "$active_devs" ] && return 0
 
+    nat_rules="$(nft list chain inet fw4 srcnat 2>/dev/null)"
+
     for dev in $active_devs; do
-        jumpline="$(nft list chain inet fw4 srcnat 2>/dev/null | grep -w "$dev")"
+        jumpline="$(echo "$nat_rules" | grep -w "$dev")"
         
         if [ -n "$jumpline" ]; then
             return 0
@@ -104,21 +99,21 @@ generate_config_json() {
 }
 
 clear_route() {
-    while ip -4 rule del fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null; do :; done
-    ip -4 route flush table $PROXY_TABLE 2>/dev/null || true
-
-    while ip -6 rule del fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null; do :; done
-    ip -6 route flush table $PROXY_TABLE 2>/dev/null || true
+    local fam
+    for fam in "-4" "-6"; do
+        while ip $fam rule del fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null; do :; done
+        ip $fam route flush table $PROXY_TABLE 2>/dev/null || true
+    done
 }
 
 config_route() {
     clear_route
-
-    ip -4 rule add fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null
-    ip -4 route replace local 0.0.0.0/0 dev lo table $PROXY_TABLE 2>/dev/null
-
-    ip -6 rule add fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null
-    ip -6 route replace local ::/0 dev lo table $PROXY_TABLE 2>/dev/null
+    local fam any
+    for fam in "-4" "-6"; do
+        [ "$fam" = "-4" ] && any="0.0.0.0/0" || any="::/0"
+        ip $fam rule add fwmark $PROXY_FWMARK table $PROXY_TABLE 2>/dev/null
+        ip $fam route replace local $any dev lo table $PROXY_TABLE 2>/dev/null
+    done
 }
 
 update_nftables() {
@@ -150,13 +145,17 @@ update_nftables() {
         
         if [ -f "$CONF_DIR/bypass_ipset.acl" ]; then
             awk '
+                BEGIN {
+                    v4 = "add element inet shadowproxy-mangle whitelist_v4_set {\n"
+                    v6 = "add element inet shadowproxy-mangle whitelist_v6_set {\n"
+                }
                 /^[^#[:space:]]/ {
-                    if ($0 ~ /\./) v4 = (v4 ? v4 ", " : "") $0
-                    else if ($0 ~ /:/) v6 = (v6 ? v6 ", " : "") $0
+                    if ($0 ~ /\./) v4 = v4 "  " $0 ",\n"
+                    else if ($0 ~ /:/) v6 = v6 "  " $0 ",\n"
                 }
                 END {
-                    if (v4) print "add element inet shadowproxy-mangle whitelist_v4_set { " v4 " }"
-                    if (v6) print "add element inet shadowproxy-mangle whitelist_v6_set { " v6 " }"
+                    if (v4 ~ /,/) print v4 "}"
+                    if (v6 ~ /,/) print v6 "}"
                 }
             ' "$CONF_DIR/bypass_ipset.acl"
         fi
